@@ -123,9 +123,7 @@
   /* Card photo area */
   .card-photo{height:140px;overflow:hidden;position:relative;background:#dfe4ea;cursor:grab;}
   .card-photo.dragging{cursor:grabbing;}
-  .card-photo img{position:absolute;top:50%;left:50%;
-    transform:translate(-50%,-50%) scale(1);pointer-events:none;
-    min-width:100%;min-height:100%;width:auto;height:auto;}
+  .card-photo img{position:absolute;top:50%;left:50%;pointer-events:none;}
   .card-photo.empty{display:flex;flex-direction:column;align-items:center;justify-content:center;
     color:#8a97a5;font-size:9px;font-family:sans-serif;text-align:center;padding:4px;gap:4px;cursor:pointer;}
   .card-photo.empty:hover{background:#d0d8e0;}
@@ -427,6 +425,7 @@ function mkBlock(spec){
   wire(b);
   if(spec.type==='photo') applyPhotoTransform(b);
   page.appendChild(b);
+  if(spec.type==='cardstrip') setTimeout(()=>fitCardImages(b), 50);
   return b;
 }
 
@@ -449,9 +448,8 @@ function renderCardStrip(cards, cardPhotoH){
     const scale=c.scale||1;
     const ox=c.ox||0, oy=c.oy||0;
     const photoInner=c.src
-      ? `<img src="${c.src}" style="position:absolute;top:50%;left:50%;`+
-        `transform:translate(calc(-50% + ${ox}px), calc(-50% + ${oy}px)) scale(${scale});`+
-        `width:100%;height:100%;object-fit:cover;pointer-events:none;">`
+      ? `<img src="${c.src}" data-ox="${ox}" data-oy="${oy}" data-scale="${scale}" `+
+        `style="position:absolute;top:50%;left:50%;transform:translate(calc(-50% + ${ox}px),calc(-50% + ${oy}px)) scale(${scale});pointer-events:none;">`
       : `<span style="font-size:9px;font-family:sans-serif;color:#8a97a5;text-align:center;padding:4px;">Select card, then use panel →</span>`;
     const emptyClass=c.src?'':'empty';
     const zoomLabel=Math.round(scale*100)+'%';
@@ -475,6 +473,25 @@ function renderCardStrip(cards, cardPhotoH){
     `<button onclick="removeCard(this.closest('.block'))">− Card</button>`+
     `</div>`+
     `<div class="card-strip">${items}</div>`;
+}
+
+function fitCardImages(b){
+  // Apply cover-fit pixel dimensions to each card image based on its card-photo box size
+  b.querySelectorAll('.card-photo img').forEach(img=>{
+    const box=img.closest('.card-photo');
+    if(!box) return;
+    const bW=box.offsetWidth, bH=box.offsetHeight;
+    if(!bW||!bH) return;
+    const apply=()=>{
+      if(!img.naturalWidth||!img.naturalHeight) return;
+      const cs=Math.max(bW/img.naturalWidth, bH/img.naturalHeight);
+      const fw=Math.round(img.naturalWidth*cs), fh=Math.round(img.naturalHeight*cs);
+      img.style.width=fw+'px';
+      img.style.height=fh+'px';
+    };
+    if(img.complete && img.naturalWidth) apply();
+    else img.onload=apply;
+  });
 }
 
 function getCards(b){
@@ -502,7 +519,7 @@ function addCard(b){
   cards.push({label:'New Level',price:'$0+',src:'',scale:1,ox:0,oy:0});
   b.dataset.cards=JSON.stringify(cards);
   b.innerHTML=renderCardStrip(cards, b.dataset.cardPhotoH)+`<div class="del">&times;</div><div class="handle"></div>`;
-  wire(b); select(b); resizeCardStrip(b); restack(); save();
+  wire(b); select(b); fitCardImages(b); resizeCardStrip(b); restack(); save();
 }
 
 function removeCard(b){
@@ -514,7 +531,7 @@ function removeCard(b){
   cards.splice(idx,1);
   b.dataset.cards=JSON.stringify(cards);
   b.innerHTML=renderCardStrip(cards, b.dataset.cardPhotoH)+`<div class="del">&times;</div><div class="handle"></div>`;
-  wire(b); select(b); resizeCardStrip(b); restack(); save();
+  wire(b); select(b); fitCardImages(b); resizeCardStrip(b); restack(); save();
 }
 
 /* Per-card upload */
@@ -1179,7 +1196,9 @@ function setOrientation(orient){
   setTimeout(()=>{
     const freshImg=b.querySelector('.photo img');
     if(freshImg && freshImg.naturalWidth){
-      const boxW=b.offsetWidth, boxH=b.offsetHeight;
+      const freshPhotoDiv=b.querySelector('.photo');
+      const boxW=freshPhotoDiv?freshPhotoDiv.offsetWidth:b.offsetWidth;
+      const boxH=freshPhotoDiv?freshPhotoDiv.offsetHeight:b.offsetHeight;
       const coverScale=Math.max(boxW/freshImg.naturalWidth, boxH/freshImg.naturalHeight);
       freshImg.style.width=Math.round(freshImg.naturalWidth*coverScale)+'px';
       freshImg.style.height=Math.round(freshImg.naturalHeight*coverScale)+'px';
@@ -1387,15 +1406,13 @@ function setPhotoWithFit(b, src, skipReflow){
     photoDiv.innerHTML=`<img src="${src}">`;
     const img=photoDiv.querySelector('img');
     const applySize=()=>{
-      const boxW=b.offsetWidth, boxH=b.offsetHeight;
+      const boxW=photoDiv.offsetWidth, boxH=photoDiv.offsetHeight;
       const natW=img.naturalWidth, natH=img.naturalHeight;
       if(!natW||!natH||!boxW||!boxH){ applyPhotoTransform(b); return; }
-      // Size the image to cover the box: find which dimension to constrain
-      const scaleW=boxW/natW, scaleH=boxH/natH;
-      const coverScale=Math.max(scaleW,scaleH);
+      const coverScale=Math.max(boxW/natW, boxH/natH);
       img.style.width=Math.round(natW*coverScale)+'px';
       img.style.height=Math.round(natH*coverScale)+'px';
-      b.dataset.imgScale=1; // user starts at 100% = image already covers box
+      b.dataset.imgScale=1;
       applyPhotoTransform(b);
     };
     img.onload=applySize;
@@ -1415,7 +1432,7 @@ function fillPhoto(src){
       if(cards[idx]!==undefined){ cards[idx].src=src; }
       cardBlock.dataset.cards=JSON.stringify(cards);
       cardBlock.innerHTML=renderCardStrip(cards, cardBlock.dataset.cardPhotoH)+`<div class="del">&times;</div><div class="handle"></div>`;
-      wire(cardBlock); select(cardBlock);
+      wire(cardBlock); select(cardBlock); fitCardImages(cardBlock);
       // Re-activate the card
       const item=cardBlock.querySelectorAll('.card-item')[idx];
       if(item){ item.classList.add('card-active'); }
@@ -1698,83 +1715,92 @@ async function exportPDF(){
   if(selected)selected.classList.remove('selected');
   document.body.classList.add('exporting');
 
-  // Flatten photo blocks: draw the exact visible crop onto a canvas so
-  // html2canvas gets a plain <img> with correct aspect ratio and no transforms.
-  function flattenImg(img, boxW, boxH, scale, ox, oy){
-    if(!img.naturalWidth||!img.naturalHeight) return null;
-    // Get the base (cover-fit) dimensions — may be px or %, fall back to computing from natural
-    let baseW=parseFloat(img.style.width);
-    let baseH=parseFloat(img.style.height);
-    if(!baseW||!baseH||isNaN(baseW)||isNaN(baseH)){
-      // Compute cover-fit dimensions from natural size and box
-      const coverScale=Math.max(boxW/img.naturalWidth, boxH/img.naturalHeight);
-      baseW=img.naturalWidth*coverScale;
-      baseH=img.naturalHeight*coverScale;
-    }
-    // Rendered size at current zoom scale
-    const rendW=baseW*scale, rendH=baseH*scale;
-    // Top-left corner of rendered image in box coordinates
-    const imgLeft=boxW/2+ox-rendW/2;
-    const imgTop =boxH/2+oy-rendH/2;
-    // Source crop: which part of the natural image maps to the visible box area
-    const scaleToNat=img.naturalWidth/rendW; // factor to convert rendered px → natural px
-    const srcX=Math.max(0,-imgLeft)*scaleToNat;
-    const srcY=Math.max(0,-imgTop)*scaleToNat;
-    const visW=Math.min(boxW, imgLeft+rendW)-Math.max(0,imgLeft);
-    const visH=Math.min(boxH, imgTop+rendH)-Math.max(0,imgTop);
-    const srcW=visW*scaleToNat;
-    const srcH=visH*scaleToNat;
-    const dstX=Math.max(0,imgLeft);
-    const dstY=Math.max(0,imgTop);
-    const c=document.createElement('canvas');
-    c.width=boxW; c.height=boxH;
-    const ctx=c.getContext('2d');
-    if(srcW>0&&srcH>0&&visW>0&&visH>0){
-      ctx.drawImage(img, srcX, srcY, srcW, srcH, dstX, dstY, visW, visH);
-    }
-    return c.toDataURL('image/jpeg',0.97);
-  }
-
-  const photoSnapshots=[];
-  page.querySelectorAll('.block[data-type="photo"]').forEach(b=>{
-    const img=b.querySelector('.photo img');
-    if(!img||!img.naturalWidth) return;
-    const flatSrc=flattenImg(img, b.offsetWidth, b.offsetHeight,
-      parseFloat(b.dataset.imgScale)||1,
-      parseFloat(b.dataset.imgX)||0,
-      parseFloat(b.dataset.imgY)||0);
-    if(!flatSrc) return;
-    photoSnapshots.push({img, origSrc:img.src, origStyle:img.style.cssText});
-    img.src=flatSrc;
-    img.style.cssText='width:100%;height:100%;object-fit:fill;display:block;position:static;transform:none;';
-  });
-
-  const cardSnapshots=[];
-  page.querySelectorAll('.card-photo img').forEach(img=>{
-    if(!img.naturalWidth) return;
-    const box=img.closest('.card-photo'); if(!box) return;
-    const m=img.style.transform.match(/calc\(-50% \+ ([\d.-]+)px\).*?calc\(-50% \+ ([\d.-]+)px\).*?scale\(([\d.]+)\)/);
-    const ox=m?parseFloat(m[1]):0, oy=m?parseFloat(m[2]):0, scale=m?parseFloat(m[3]):1;
-    const flatSrc=flattenImg(img, box.offsetWidth, box.offsetHeight, scale, ox, oy);
-    if(!flatSrc) return;
-    cardSnapshots.push({img, origSrc:img.src, origStyle:img.style.cssText});
-    img.src=flatSrc;
-    img.style.cssText='width:100%;height:100%;object-fit:fill;display:block;position:static;transform:none;';
-  });
-
   try{
-    // scale 3.125 => 816px * 3.125 = 2550px = 8.5in @ 300dpi
-    const canvas=await html2canvas(page,{scale:3.125,useCORS:true,backgroundColor:'#ffffff',width:816,height:1056});
-    const img=canvas.toDataURL('image/jpeg',0.95);
+    const SCALE=3.125; // 816px * 3.125 = 2550px = 8.5in @ 300dpi
+    const PW=Math.round(816*SCALE), PH=Math.round(1056*SCALE);
+    const pageRect=page.getBoundingClientRect();
+
+    // Step 1: hide all photo/card images so html2canvas renders the background only
+    const hidden=[];
+    page.querySelectorAll('.block[data-type="photo"] .photo img, .card-photo img').forEach(img=>{
+      hidden.push({img, vis:img.style.visibility});
+      img.style.visibility='hidden';
+    });
+
+    // Step 2: render the page without photos using html2canvas
+    const bgCanvas=await html2canvas(page,{
+      scale:SCALE, useCORS:true, backgroundColor:'#ffffff', width:816, height:1056
+    });
+
+    // Step 3: create output canvas, draw background
+    const out=document.createElement('canvas');
+    out.width=PW; out.height=PH;
+    const ctx=out.getContext('2d');
+    ctx.drawImage(bgCanvas,0,0);
+
+    // Step 4: draw each photo block directly onto the output canvas
+    function drawPhoto(img, boxEl, scale, ox, oy){
+      if(!img||!img.naturalWidth||!img.naturalHeight) return;
+      const r=boxEl.getBoundingClientRect();
+      const bW=r.width, bH=r.height;
+      const dstX=Math.round((r.left - pageRect.left)*SCALE);
+      const dstY=Math.round((r.top  - pageRect.top )*SCALE);
+      const dstW=Math.round(bW*SCALE);
+      const dstH=Math.round(bH*SCALE);
+      // Cover-fit base: use img.style.width if it matches box, else recompute
+      let baseW=parseFloat(img.style.width), baseH=parseFloat(img.style.height);
+      if(!baseW||isNaN(baseW)){
+        const cs=Math.max(bW/img.naturalWidth, bH/img.naturalHeight);
+        baseW=img.naturalWidth*cs; baseH=img.naturalHeight*cs;
+      }
+      const rendW=baseW*scale, rendH=baseH*scale;
+      const imgL=bW/2+ox-rendW/2, imgT=bH/2+oy-rendH/2;
+      const visX=Math.max(0,imgL), visY=Math.max(0,imgT);
+      const visW=Math.min(bW, imgL+rendW)-visX;
+      const visH=Math.min(bH, imgT+rendH)-visY;
+      if(visW<=0||visH<=0) return;
+      const toNat=img.naturalWidth/rendW;
+      const srcX=(visX-imgL)*toNat, srcY=(visY-imgT)*toNat;
+      const srcW=visW*toNat, srcH=visH*toNat;
+      ctx.save();
+      ctx.beginPath();
+      ctx.rect(dstX, dstY, dstW, dstH);
+      ctx.clip();
+      ctx.drawImage(img, srcX, srcY, srcW, srcH,
+        dstX+Math.round(visX*SCALE), dstY+Math.round(visY*SCALE),
+        Math.round(visW*SCALE), Math.round(visH*SCALE));
+      ctx.restore();
+    }
+
+    page.querySelectorAll('.block[data-type="photo"]').forEach(b=>{
+      const img=b.querySelector('.photo img');
+      drawPhoto(img, b.querySelector('.photo'),
+        parseFloat(b.dataset.imgScale)||1,
+        parseFloat(b.dataset.imgX)||0,
+        parseFloat(b.dataset.imgY)||0);
+    });
+
+    page.querySelectorAll('.card-photo').forEach(box=>{
+      const img=box.querySelector('img');
+      const m=(img?.style.transform||'').match(/calc\(-50% \+ ([\d.-]+)px\).*?calc\(-50% \+ ([\d.-]+)px\).*?scale\(([\d.]+)\)/);
+      drawPhoto(img, box,
+        m?parseFloat(m[3]):1,
+        m?parseFloat(m[1]):0,
+        m?parseFloat(m[2]):0);
+    });
+
+    // Step 5: save as PDF
     const {jsPDF}=window.jspdf;
     const pdf=new jsPDF({unit:'in',format:'letter',orientation:'portrait'});
-    pdf.addImage(img,'JPEG',0,0,8.5,11,undefined,'FAST');
+    pdf.addImage(out.toDataURL('image/jpeg',0.95),'JPEG',0,0,8.5,11,undefined,'FAST');
     pdf.save('blair-onepager.pdf');
-  }catch(e){ alert('Export failed: '+e.message); }
+
+  }catch(e){ alert('Export failed: '+e.message); console.error(e); }
   finally{
-    // Restore all photo images
-    photoSnapshots.forEach(({img,origSrc,origStyle})=>{ img.src=origSrc; img.style.cssText=origStyle; });
-    cardSnapshots.forEach(({img,origSrc,origStyle})=>{ img.src=origSrc; img.style.cssText=origStyle; });
+    // Restore image visibility
+    page.querySelectorAll('.block[data-type="photo"] .photo img, .card-photo img').forEach(img=>{
+      img.style.visibility='';
+    });
     document.body.classList.remove('exporting');
     if(selected)selected.classList.add('selected');
     btn.textContent=old; btn.disabled=false;
@@ -1956,7 +1982,7 @@ function insertPick(type){
     const b=mkBlock(spec);
     b.querySelectorAll('.card-photo').forEach(ph=>ph.style.height=photoH+'px');
     b.dataset.cardPhotoH = photoH;
-    select(b); reflow(); restack(); save();
+    select(b); fitCardImages(b); reflow(); restack(); save();
     return;
   }
   // quote or box - find or create the bottom block and switch its mode
